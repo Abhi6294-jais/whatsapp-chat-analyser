@@ -178,30 +178,38 @@ def display_user_analysis(df):
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("Top Users by Messages")
+        st.subheader("📊 Top Users by Messages")
         fig = px.bar(
-            x=user_msg_counts.head(10).values,
-            y=user_msg_counts.head(10).index,
+            x=user_msg_counts.head(15).values,
+            y=user_msg_counts.head(15).index,
             orientation='h',
-            title="Top 10 Users by Message Count",
-            labels={'x': 'Number of Messages', 'y': 'User'}
+            title="Top 15 Users by Message Count",
+            labels={'x': 'Number of Messages', 'y': 'User'},
+            color=user_msg_counts.head(15).values,
+            color_continuous_scale='Viridis'
         )
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
-        st.subheader("User Statistics")
+        st.subheader("📋 User Statistics Table")
         user_stats = pd.DataFrame({
             'Messages': user_msg_counts,
             'Total Words': user_word_counts,
             'Avg Words/Message': avg_msg_len
         })
-        st.dataframe(user_stats.head(10), use_container_width=True)
-
+        st.dataframe(user_stats.head(15), use_container_width=True)
+        
+        # Additional user metrics
+        st.subheader("🏆 User Rankings")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Most Active User", user_msg_counts.index[0])
+        col2.metric("Total Messages", user_msg_counts.iloc[0])
+        col3.metric("Most Wordy User", user_word_counts.index[0])
 def display_time_analysis(df):
     st.header("⏰ Activity Trends & Patterns")
 
-    # Monthly timeline
-    st.subheader("Monthly Message Timeline")
+    # 1. Monthly timeline (your first screenshot)
+    st.subheader("📈 Monthly Activity Timeline")
     monthly_activity = df.groupby(df['date'].dt.to_period("M")).size()
     monthly_activity.index = monthly_activity.index.astype(str)
     
@@ -216,7 +224,8 @@ def display_time_analysis(df):
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("Activity by Day of Week")
+        # 2. Busiest days (your second screenshot)
+        st.subheader("📅 Busiest Days of Week")
         day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         day_counts = df['Day'].value_counts().reindex(day_order)
         
@@ -224,37 +233,61 @@ def display_time_analysis(df):
             x=day_counts.index,
             y=day_counts.values,
             title="Messages by Day of Week",
-            labels={'x': 'Day', 'y': 'Number of Messages'}
+            labels={'x': 'Day', 'y': 'Number of Messages'},
+            color=day_counts.values,
+            color_continuous_scale='Viridis'
         )
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
-        st.subheader("Activity by Month")
+        # 3. Busiest months (your second screenshot)
+        st.subheader("🗓️ Busiest Months")
         month_counts = df['Month'].value_counts()
         
         fig = px.bar(
             x=month_counts.index,
             y=month_counts.values,
             title="Messages by Month",
-            labels={'x': 'Month', 'y': 'Number of Messages'}
+            labels={'x': 'Month', 'y': 'Number of Messages'},
+            color=month_counts.values,
+            color_continuous_scale='Plasma'
         )
         st.plotly_chart(fig, use_container_width=True)
         
-    # Activity heatmap
-    st.subheader("Weekly Activity Heatmap")
+    # 4. Weekly Activity Heatmap (your third and fourth screenshots)
+    st.subheader("🔥 Weekly Activity Heatmap")
     create_activity_heatmap(df)
     
-    # Day period analysis
-    st.subheader("Activity by Time of Day")
-    period_order = ['Morning', 'Afternoon', 'Evening', 'Night']
-    period_counts = df['day_period'].value_counts().reindex(period_order)
+    # 5. Activity by time of day
+    st.subheader("🌅 Activity by Time of Day")
+    col1, col2 = st.columns(2)
     
-    fig = px.pie(
-        values=period_counts.values,
-        names=period_counts.index,
-        title="Message Distribution by Time of Day"
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    with col1:
+        period_order = ['Morning', 'Afternoon', 'Evening', 'Night']
+        period_counts = df['day_period'].value_counts().reindex(period_order)
+        
+        fig = px.pie(
+            values=period_counts.values,
+            names=period_counts.index,
+            title="Message Distribution by Time of Day",
+            color=period_counts.index,
+            color_discrete_sequence=px.colors.sequential.Viridis
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        # Hourly activity
+        hour_counts = df['Hour'].value_counts().sort_index()
+        fig = px.bar(
+            x=hour_counts.index,
+            y=hour_counts.values,
+            title="Activity by Hour of Day",
+            labels={'x': 'Hour of Day', 'y': 'Number of Messages'},
+            color=hour_counts.values,
+            color_continuous_scale='Thermal'
+        )
+        fig.update_xaxes(tickvals=list(range(0, 24)))
+        st.plotly_chart(fig, use_container_width=True)
 
 def create_activity_heatmap(df):
     """Creates an interactive heatmap using plotly with error handling"""
@@ -301,7 +334,7 @@ def display_content_analysis(df):
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("Word Cloud")
+        st.subheader("☁️ Word Cloud - Most Frequent Words")
         stop_words = set(WordCloud().stopwords)
         stop_words.update(['media', 'omitted', 'null', 'p', 'message', 'deleted', 'pm', 'am', 'ok', 'yes', 'no', 'hi', 'hello']) 
         text = " ".join(str(message).lower() for message in df['Message'])
@@ -313,29 +346,37 @@ def display_content_analysis(df):
             background_color='white', 
             stopwords=stop_words, 
             min_font_size=10,
-            colormap='viridis'
+            colormap='viridis',
+            max_words=100
         ).generate(text)
         
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.imshow(wordcloud, interpolation='bilinear')
         ax.axis("off")
-        ax.set_title('Most Frequent Words')
+        ax.set_title('Top 100 Most Frequent Words')
         st.pyplot(fig)
 
     with col2:
-        st.subheader("Top Emojis")
+        st.subheader("😊 Emoji Analysis")
         emoji_df = extract_emojis(df)
         if not emoji_df.empty:
+            # Top emojis bar chart
             fig = px.bar(
-                emoji_df.head(10),
+                emoji_df.head(15),
                 x='Count',
                 y='Emoji',
                 orientation='h',
-                title='Top 10 Most Used Emojis',
+                title='Top 15 Most Used Emojis',
                 color='Count',
                 color_continuous_scale='viridis'
             )
             st.plotly_chart(fig, use_container_width=True)
+            
+            # Emoji stats
+            total_emojis = emoji_df['Count'].sum()
+            unique_emojis = len(emoji_df)
+            st.metric("Total Emojis Used", f"{total_emojis:,}")
+            st.metric("Unique Emojis", unique_emojis)
         else:
             st.info("No emojis found in the chat.")
 
