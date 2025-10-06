@@ -293,7 +293,7 @@ def create_activity_heatmap(df):
         st.plotly_chart(fig, use_container_width=True)
         
     except Exception as e:
-        st.warning(f"Could not generate heatmap: Not enough varied activity data. Continue chatting! 📱")
+        st.warning("Could not generate heatmap: Not enough varied activity data. Continue chatting! 📱")
 
 def display_content_analysis(df):
     st.header("📝 Content & Topic Analysis")
