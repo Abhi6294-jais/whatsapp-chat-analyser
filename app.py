@@ -257,28 +257,43 @@ def display_time_analysis(df):
     st.plotly_chart(fig, use_container_width=True)
 
 def create_activity_heatmap(df):
-    """Creates an interactive heatmap using plotly"""
-    activity_map = df.pivot_table(
-        index='Day',
-        columns='Hour',
-        values='Message',
-        aggfunc='count',
-        fill_value=0
-    )
+    """Creates an interactive heatmap using plotly with error handling"""
+    try:
+        # Create pivot table for heatmap
+        activity_map = df.pivot_table(
+            index='Day',
+            columns='Hour',
+            values='Message',
+            aggfunc='count',
+            fill_value=0
+        )
 
-    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    activity_map = activity_map.reindex(day_order)
+        # Ensure all days and hours are present
+        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        hour_range = list(range(24))
+        
+        # Reindex to include all days and hours
+        activity_map = activity_map.reindex(day_order, fill_value=0)
+        activity_map = activity_map.reindex(columns=hour_range, fill_value=0)
 
-    fig = px.imshow(
-        activity_map,
-        labels=dict(x="Hour of Day", y="Day of Week", color="Messages"),
-        x=[f"{h:02d}:00" for h in range(24)],
-        y=day_order,
-        aspect="auto",
-        color_continuous_scale="Viridis"
-    )
-    fig.update_layout(title="Messages Heatmap: Day vs Hour")
-    st.plotly_chart(fig, use_container_width=True)
+        # Check if we have enough data for heatmap
+        if activity_map.sum().sum() < 10:  # If very few messages
+            st.warning("Not enough data to generate a meaningful heatmap. Continue chatting! 😊")
+            return
+
+        fig = px.imshow(
+            activity_map,
+            labels=dict(x="Hour of Day", y="Day of Week", color="Messages"),
+            x=[f"{h:02d}:00" for h in range(24)],
+            y=day_order,
+            aspect="auto",
+            color_continuous_scale="Viridis"
+        )
+        fig.update_layout(title="Messages Heatmap: Day vs Hour")
+        st.plotly_chart(fig, use_container_width=True)
+        
+    except Exception as e:
+        st.warning(f"Could not generate heatmap: Not enough varied activity data. Continue chatting! 📱")
 
 def display_content_analysis(df):
     st.header("📝 Content & Topic Analysis")
