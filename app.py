@@ -206,19 +206,25 @@ def predict_future_activity(df):
         return None, None, None
 
 def calculate_chat_health(df):
-    """Calculate overall chat health score (0-100)"""
+    """Calculate overall chat health score (0-100) with better error handling"""
     try:
         scores = []
         
         # Activity consistency (30%)
         daily_counts = df.groupby(df['date'].dt.date).size()
-        daily_var = daily_counts.std()
-        consistency_score = max(0, 100 - (daily_var * 2))
+        if len(daily_counts) > 1:
+            daily_var = daily_counts.std()
+            consistency_score = max(0, 100 - (daily_var * 2))
+        else:
+            consistency_score = 50  # Default for single day
         scores.append(consistency_score * 0.3)
         
         # User participation (30%)
         user_distribution = df['User'].value_counts(normalize=True)
-        participation_score = 100 * (1 - user_distribution.std())
+        if len(user_distribution) > 1:
+            participation_score = 100 * (1 - user_distribution.std())
+        else:
+            participation_score = 30  # Lower score for single user
         scores.append(participation_score * 0.3)
         
         # Growth trend (20%) - Use linear regression trend
@@ -228,18 +234,24 @@ def calculate_chat_health(df):
             _, _, slope, _ = metrics
             growth_score = 50 + (slope * 10)
         else:
-            growth_score = 50
-        scores.append(max(0, min(100, growth_score)) * 0.2)
+            growth_score = 50  # Neutral growth
+        growth_score = max(0, min(100, growth_score))
+        scores.append(growth_score * 0.2)
         
         # Engagement diversity (20%)
         unique_users = df['User'].nunique()
         total_messages = len(df)
-        diversity_score = min(100, (unique_users / total_messages) * 1000) if total_messages > 0 else 0
+        if total_messages > 0 and unique_users > 1:
+            diversity_score = min(100, (unique_users / total_messages) * 1000)
+        else:
+            diversity_score = 20  # Low score for single user
         scores.append(diversity_score * 0.2)
         
-        return sum(scores)
-    except:
-        return 50  # Default score if calculation fails
+        total_score = sum(scores)
+        return max(0, min(100, total_score))  # Ensure between 0-100
+        
+    except Exception as e:
+        return 50  # Default neutral score if calculation fails
 
 def predict_optimal_posting_time(df):
     """Predict best time to send messages for maximum visibility"""
@@ -596,7 +608,7 @@ def display_ml_analysis(df):
         st.error(f"❌ Error in ML analysis: {str(e)}")
         st.info("This might happen with very short or irregular chat data. Try with a longer WhatsApp export.")
 
-def display_advanced_ml_insights(df):
+def display_advanced_ml_insights(df, selected_user):
     st.header("🔮 Advanced ML Insights")
     
     col1, col2 = st.columns(2)
@@ -605,8 +617,11 @@ def display_advanced_ml_insights(df):
         st.subheader("📊 Chat Health Score")
         health_score = calculate_chat_health(df)
         
-        # Health meter
-        st.progress(health_score/100)
+        # FIXED: Ensure health_score is between 0 and 100
+        health_score = max(0, min(100, health_score))
+        
+        # Health meter - FIXED: Convert to float between 0.0 and 1.0
+        st.progress(float(health_score / 100))
         st.metric("Overall Chat Health", f"{health_score:.1f}/100")
         
         if health_score > 80:
@@ -629,26 +644,29 @@ def display_advanced_ml_insights(df):
         else:
             st.info("Post evenly throughout the day")
     
-    # User engagement tiers
-    st.subheader("👥 User Engagement Tiers")
-    user_engagement = df['User'].value_counts()
-    
-    if len(user_engagement) >= 3:
-        tiers = {
-            'Super Active': user_engagement[user_engagement > user_engagement.quantile(0.8)].index.tolist(),
-            'Regular': user_engagement[(user_engagement <= user_engagement.quantile(0.8)) & 
-                                     (user_engagement > user_engagement.quantile(0.4))].index.tolist(),
-            'Occasional': user_engagement[user_engagement <= user_engagement.quantile(0.4)].index.tolist()
-        }
+    # User engagement tiers - only show if we have multiple users
+    if selected_user == "Overall":
+        st.subheader("👥 User Engagement Tiers")
+        user_engagement = df['User'].value_counts()
         
-        for tier, users in tiers.items():
-            with st.expander(f"{tier} ({len(users)} users)"):
-                if users:
-                    st.write(", ".join(users[:10]))  # Show first 10 users
-                else:
-                    st.write("No users in this tier")
+        if len(user_engagement) >= 3:
+            tiers = {
+                'Super Active': user_engagement[user_engagement > user_engagement.quantile(0.8)].index.tolist(),
+                'Regular': user_engagement[(user_engagement <= user_engagement.quantile(0.8)) & 
+                                         (user_engagement > user_engagement.quantile(0.4))].index.tolist(),
+                'Occasional': user_engagement[user_engagement <= user_engagement.quantile(0.4)].index.tolist()
+            }
+            
+            for tier, users in tiers.items():
+                with st.expander(f"{tier} ({len(users)} users)"):
+                    if users:
+                        st.write(", ".join(users[:10]))  # Show first 10 users
+                    else:
+                        st.write("No users in this tier")
+        else:
+            st.info("Need more users for engagement tier analysis")
     else:
-        st.info("Need more users for engagement tier analysis")
+        st.info("👤 User tiers analysis available for 'Overall' view only")
     
     # Conversation analytics
     st.subheader("💬 Conversation Analytics")
@@ -729,7 +747,7 @@ def main_app():
             st.markdown("---")
             display_ml_analysis(temp_df)
             st.markdown("---")
-            display_advanced_ml_insights(temp_df)
+            display_advanced_ml_insights(temp_df, selected_user) 
             
             # Optional: Add download button for processed data
             st.sidebar.markdown("---")
