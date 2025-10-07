@@ -394,121 +394,158 @@ def display_sentiment_analysis(df):
 
 def predict_future_activity(df):
     """Use Linear Regression to predict future message volume"""
+    try:
+        # Ensure we have datetime data
+        if not pd.api.types.is_datetime64_any_dtype(df['date']):
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        
+        # Remove any rows with invalid dates
+        df = df.dropna(subset=['date'])
+        
+        if df.empty:
+            return None, None, None
+        
+        # Prepare data: daily message counts
+        daily_counts = df.groupby(df['date'].dt.date).size().reset_index()
+        daily_counts.columns = ['date', 'message_count']
+        daily_counts = daily_counts.sort_values('date')
+        
+        # Ensure date column is proper datetime
+        daily_counts['date'] = pd.to_datetime(daily_counts['date'])
+        
+        # Create features: days since start
+        daily_counts['days'] = (daily_counts['date'] - daily_counts['date'].min()).dt.days
+        
+        if len(daily_counts) < 5:  # Reduced from 10 to 5 for better usability
+            return None, None, None
+        
+        # Prepare features and target
+        X = daily_counts['days'].values.reshape(-1, 1)
+        y = daily_counts['message_count'].values
+        
+        # Train Linear Regression model
+        model = LinearRegression()
+        model.fit(X, y)
+        
+        # Make predictions
+        y_pred = model.predict(X)
+        
+        # Future predictions (next 30 days)
+        future_days = np.array(range(daily_counts['days'].max() + 1, daily_counts['days'].max() + 31)).reshape(-1, 1)
+        future_predictions = model.predict(future_days)
+        
+        # Ensure no negative predictions
+        future_predictions = np.maximum(future_predictions, 0)
+        
+        # Calculate metrics
+        r2 = r2_score(y, y_pred)
+        mse = mean_squared_error(y, y_pred)
+        
+        return daily_counts, future_predictions, (r2, mse, model.coef_[0], model.intercept_)
     
-    # Prepare data: daily message counts
-    daily_counts = df.groupby(df['date'].dt.date).size().reset_index()
-    daily_counts.columns = ['date', 'message_count']
-    daily_counts = daily_counts.sort_values('date')
-    
-    # Create features: days since start
-    daily_counts['days'] = (daily_counts['date'] - daily_counts['date'].min()).dt.days
-    
-    if len(daily_counts) < 10:
-        st.warning("📊 Need at least 10 days of data for accurate predictions")
+    except Exception as e:
+        st.error(f"ML Model Error: {str(e)}")
         return None, None, None
-    
-    # Prepare features and target
-    X = daily_counts['days'].values.reshape(-1, 1)
-    y = daily_counts['message_count'].values
-    
-    # Train Linear Regression model
-    model = LinearRegression()
-    model.fit(X, y)
-    
-    # Make predictions
-    y_pred = model.predict(X)
-    
-    # Future predictions (next 30 days)
-    future_days = np.array(range(daily_counts['days'].max() + 1, daily_counts['days'].max() + 31)).reshape(-1, 1)
-    future_predictions = model.predict(future_days)
-    
-    # Calculate metrics
-    r2 = r2_score(y, y_pred)
-    mse = mean_squared_error(y, y_pred)
-    
-    return daily_counts, future_predictions, (r2, mse, model.coef_[0], model.intercept_)
 
 def display_ml_analysis(df):
     st.header("🤖 Machine Learning Insights")
     st.subheader("📈 Linear Regression - Message Volume Prediction")
     
-    with st.spinner("Training prediction model..."):
-        result = predict_future_activity(df)
-    
-    if result[0] is not None:
-        daily_counts, future_predictions, metrics = result
-        r2, mse, slope, intercept = metrics
-        
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("R² Score", f"{r2:.3f}")
-        col2.metric("Trend Slope", f"{slope:.2f}")
-        col3.metric("Avg Daily Messages", f"{daily_counts['message_count'].mean():.1f}")
-        col4.metric("Predicted Growth", "📈" if slope > 0 else "📉")
-        
-        # Create visualization
-        fig = go.Figure()
-        
-        # Actual data
-        fig.add_trace(go.Scatter(
-            x=daily_counts['date'],
-            y=daily_counts['message_count'],
-            mode='markers',
-            name='Actual Messages',
-            marker=dict(color='blue', size=8)
-        ))
-        
-        # Regression line
-        X = daily_counts['days'].values.reshape(-1, 1)
-        model = LinearRegression()
-        model.fit(X, daily_counts['message_count'])
-        regression_line = model.predict(X)
-        
-        fig.add_trace(go.Scatter(
-            x=daily_counts['date'],
-            y=regression_line,
-            mode='lines',
-            name='Trend Line',
-            line=dict(color='red', width=3)
-        ))
-        
-        # Future predictions
-        last_date = daily_counts['date'].max()
-        future_dates = [last_date + pd.Timedelta(days=i) for i in range(1, 31)]
-        
-        fig.add_trace(go.Scatter(
-            x=future_dates,
-            y=future_predictions,
-            mode='lines',
-            name='Future Prediction',
-            line=dict(color='green', width=2, dash='dash')
-        ))
-        
-        fig.update_layout(
-            title="Message Volume Trend & Prediction (Linear Regression)",
-            xaxis_title="Date",
-            yaxis_title="Number of Messages",
-            showlegend=True
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Interpretation
-        st.subheader("📊 Trend Analysis")
-        if slope > 1:
-            st.success(f"🚀 **Strong Growth Trend**: Messages are increasing by {slope:.2f} per day on average")
-        elif slope > 0:
-            st.info(f"📈 **Moderate Growth**: Messages are slowly increasing by {slope:.2f} per day")
-        elif slope == 0:
-            st.warning("➡️ **Stable Activity**: Message volume is consistent")
-        else:
-            st.error(f"📉 **Declining Trend**: Messages are decreasing by {abs(slope):.2f} per day")
+    try:
+        # Check if we have enough data
+        if len(df) < 20:
+            st.info("📊 Need at least 20 messages to generate predictions")
+            return
             
-        # Future insights
-        avg_future = np.mean(future_predictions)
-        st.metric("Predicted Avg Messages (Next 30 days)", f"{avg_future:.1f}")
+        with st.spinner("Training prediction model..."):
+            result = predict_future_activity(df)
         
-    else:
-        st.info("📊 Collect more chat data (10+ days) to enable predictions")
+        if result[0] is not None:
+            daily_counts, future_predictions, metrics = result
+            r2, mse, slope, intercept = metrics
+            
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("R² Score", f"{r2:.3f}")
+            col2.metric("Trend Slope", f"{slope:.2f}")
+            col3.metric("Avg Daily Messages", f"{daily_counts['message_count'].mean():.1f}")
+            col4.metric("Predicted Growth", "📈" if slope > 0 else "📉")
+            
+            # Create visualization
+            fig = go.Figure()
+            
+            # Actual data
+            fig.add_trace(go.Scatter(
+                x=daily_counts['date'],
+                y=daily_counts['message_count'],
+                mode='markers+lines',
+                name='Actual Messages',
+                marker=dict(color='blue', size=6),
+                line=dict(color='blue', width=1)
+            ))
+            
+            # Regression line
+            X = daily_counts['days'].values.reshape(-1, 1)
+            model = LinearRegression()
+            model.fit(X, daily_counts['message_count'])
+            regression_line = model.predict(X)
+            
+            fig.add_trace(go.Scatter(
+                x=daily_counts['date'],
+                y=regression_line,
+                mode='lines',
+                name='Trend Line',
+                line=dict(color='red', width=3)
+            ))
+            
+            # Future predictions
+            last_date = daily_counts['date'].max()
+            future_dates = [last_date + pd.Timedelta(days=i) for i in range(1, 31)]
+            
+            fig.add_trace(go.Scatter(
+                x=future_dates,
+                y=future_predictions,
+                mode='lines',
+                name='Future Prediction',
+                line=dict(color='green', width=2, dash='dash')
+            ))
+            
+            fig.update_layout(
+                title="Message Volume Trend & Prediction (Linear Regression)",
+                xaxis_title="Date",
+                yaxis_title="Number of Messages",
+                showlegend=True
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Interpretation
+            st.subheader("📊 Trend Analysis")
+            if slope > 1:
+                st.success(f"🚀 **Strong Growth Trend**: Messages are increasing by {slope:.2f} per day on average")
+            elif slope > 0.1:
+                st.info(f"📈 **Moderate Growth**: Messages are slowly increasing by {slope:.2f} per day")
+            elif slope > -0.1:
+                st.warning("➡️ **Stable Activity**: Message volume is consistent")
+            else:
+                st.error(f"📉 **Declining Trend**: Messages are decreasing by {abs(slope):.2f} per day")
+                
+            # Future insights
+            avg_future = np.mean(future_predictions)
+            current_avg = daily_counts['message_count'].mean()
+            change_pct = ((avg_future - current_avg) / current_avg) * 100
+            
+            st.metric(
+                "Predicted Avg (Next 30 days)", 
+                f"{avg_future:.1f}", 
+                f"{change_pct:+.1f}%"
+            )
+            
+        else:
+            st.info("📊 Not enough daily variation in data for accurate predictions. Try with a longer chat history!")
+            
+    except Exception as e:
+        st.error(f"❌ Error in ML analysis: {str(e)}")
+        st.info("This might happen with very short or irregular chat data. Try with a longer WhatsApp export.")
 
 def main_app():
     st.title("💬 WhatsApp Chat Analyzer")
