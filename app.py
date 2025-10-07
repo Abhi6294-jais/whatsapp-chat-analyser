@@ -205,6 +205,126 @@ def predict_future_activity(df):
     except Exception as e:
         return None, None, None
 
+
+def analyze_sentiment(df):
+    """Add sentiment analysis to messages and return analyzed dataframe"""
+    try:
+        def get_sentiment(text):
+            try:
+                # Clean the text
+                clean_text = str(text).strip()
+                if len(clean_text) < 3:  # Too short for meaningful analysis
+                    return 0
+                return TextBlob(clean_text).sentiment.polarity
+            except:
+                return 0
+        
+        # Apply sentiment analysis
+        df['sentiment'] = df['Message'].apply(get_sentiment)
+        return df
+    except Exception as e:
+        st.error(f"Sentiment analysis error: {e}")
+        return df
+
+def display_sentiment_analysis(df, selected_user):
+    st.header("😊 Sentiment Analysis")
+    
+    # Analyze sentiment
+    with st.spinner("Analyzing message sentiments..."):
+        df_with_sentiment = analyze_sentiment(df)
+    
+    # Overall metrics
+    avg_sentiment = df_with_sentiment['sentiment'].mean()
+    positive_msgs = len(df_with_sentiment[df_with_sentiment['sentiment'] > 0.1])
+    negative_msgs = len(df_with_sentiment[df_with_sentiment['sentiment'] < -0.1])
+    neutral_msgs = len(df_with_sentiment[(df_with_sentiment['sentiment'] >= -0.1) & (df_with_sentiment['sentiment'] <= 0.1)])
+    total_msgs = len(df_with_sentiment)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Avg Sentiment", f"{avg_sentiment:.3f}")
+    col2.metric("Positive Messages", f"{positive_msgs} ({positive_msgs/total_msgs*100:.1f}%)")
+    col3.metric("Neutral Messages", f"{neutral_msgs} ({neutral_msgs/total_msgs*100:.1f}%)")
+    col4.metric("Negative Messages", f"{negative_msgs} ({negative_msgs/total_msgs*100:.1f}%)")
+    
+    # Sentiment distribution chart
+    st.subheader("📊 Sentiment Distribution")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Pie chart
+        sentiment_counts = [positive_msgs, neutral_msgs, negative_msgs]
+        sentiment_labels = ['Positive 😊', 'Neutral 😐', 'Negative 😞']
+        
+        fig = px.pie(
+            values=sentiment_counts,
+            names=sentiment_labels,
+            title="Message Sentiment Distribution",
+            color=sentiment_labels,
+            color_discrete_map={
+                'Positive 😊': '#00ff00', 
+                'Neutral 😐': '#ffff00', 
+                'Negative 😞': '#ff0000'
+            }
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        # Sentiment over time
+        daily_sentiment = df_with_sentiment.groupby(df_with_sentiment['date'].dt.date)['sentiment'].mean().reset_index()
+        daily_sentiment.columns = ['date', 'avg_sentiment']
+        daily_sentiment['date'] = pd.to_datetime(daily_sentiment['date'])
+        
+        fig = px.line(
+            daily_sentiment,
+            x='date',
+            y='avg_sentiment',
+            title="Daily Average Sentiment Trend",
+            labels={'avg_sentiment': 'Sentiment Score', 'date': 'Date'}
+        )
+        fig.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="Neutral Line")
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Most positive/negative messages
+    st.subheader("🌟 Sentiment Highlights")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**Most Positive Messages 😊**")
+        positive_messages = df_with_sentiment.nlargest(3, 'sentiment')[['User', 'Message', 'sentiment']]
+        for idx, row in positive_messages.iterrows():
+            st.write(f"**{row['User']}** (Score: {row['sentiment']:.3f})")
+            # Show first 100 characters of message
+            message_preview = row['Message'][:100] + "..." if len(row['Message']) > 100 else row['Message']
+            st.write(f"*\"{message_preview}\"*")
+            st.write("---")
+    
+    with col2:
+        st.write("**Most Negative Messages 😞**")
+        negative_messages = df_with_sentiment.nsmallest(3, 'sentiment')[['User', 'Message', 'sentiment']]
+        for idx, row in negative_messages.iterrows():
+            st.write(f"**{row['User']}** (Score: {row['sentiment']:.3f})")
+            message_preview = row['Message'][:100] + "..." if len(row['Message']) > 100 else row['Message']
+            st.write(f"*\"{message_preview}\"*")
+            st.write("---")
+    
+    # User sentiment analysis (only for overall view)
+    if selected_user == "Overall":
+        st.subheader("👥 User Sentiment Analysis")
+        user_sentiment = df_with_sentiment.groupby('User').agg({
+            'sentiment': ['mean', 'count']
+        }).round(3)
+        user_sentiment.columns = ['Avg Sentiment', 'Message Count']
+        user_sentiment = user_sentiment[user_sentiment['Message Count'] > 5]  # Only users with enough messages
+        
+        if not user_sentiment.empty:
+            st.dataframe(user_sentiment.sort_values('Avg Sentiment', ascending=False), use_container_width=True)
+        else:
+            st.info("Need more messages per user for sentiment analysis")
+
+
+
 def calculate_chat_health(df):
     """Calculate overall chat health score (0-100) with better error handling"""
     try:
@@ -746,6 +866,9 @@ def main_app():
             display_content_analysis(temp_df)
             st.markdown("---")
             display_ml_analysis(temp_df)
+            # After ML analysis, add sentiment analysis
+            st.markdown("---")
+            display_sentiment_analysis(temp_df, selected_user)  # Pass selected_user as parameter
             st.markdown("---")
             display_advanced_ml_insights(temp_df, selected_user) 
             
