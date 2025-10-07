@@ -867,10 +867,12 @@ def main_app():
             st.markdown("---")
             display_ml_analysis(temp_df)
             # After ML analysis, add sentiment analysis
-            st.markdown("---")
-            display_sentiment_analysis(temp_df, selected_user)  # Pass selected_user as parameter
+          
             st.markdown("---")
             display_advanced_ml_insights(temp_df, selected_user) 
+            # ADD THIS LINE FOR SENTIMENT ANALYSIS
+            st.markdown("---")
+            display_sentiment_analysis(temp_df, selected_user)  # Make sure to pass selected_user
             
             # Optional: Add download button for processed data
             st.sidebar.markdown("---")
