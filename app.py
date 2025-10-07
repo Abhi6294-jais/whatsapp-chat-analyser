@@ -15,6 +15,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.cluster import KMeans
+from textblob import TextBlob
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -147,6 +149,117 @@ def extract_emojis(df):
     emoji_df = pd.DataFrame(all_emojis.most_common(20), columns=['Emoji', 'Count'])
     return emoji_df
 
+# --- ML Functions ---
+
+def predict_future_activity(df):
+    """Use Linear Regression to predict future message volume"""
+    try:
+        # Ensure we have datetime data
+        if not pd.api.types.is_datetime64_any_dtype(df['date']):
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        
+        # Remove any rows with invalid dates
+        df = df.dropna(subset=['date'])
+        
+        if df.empty:
+            return None, None, None
+        
+        # Prepare data: daily message counts
+        daily_counts = df.groupby(df['date'].dt.date).size().reset_index()
+        daily_counts.columns = ['date', 'message_count']
+        daily_counts = daily_counts.sort_values('date')
+        
+        # Ensure date column is proper datetime
+        daily_counts['date'] = pd.to_datetime(daily_counts['date'])
+        
+        # Create features: days since start
+        daily_counts['days'] = (daily_counts['date'] - daily_counts['date'].min()).dt.days
+        
+        if len(daily_counts) < 5:
+            return None, None, None
+        
+        # Prepare features and target
+        X = daily_counts['days'].values.reshape(-1, 1)
+        y = daily_counts['message_count'].values
+        
+        # Train Linear Regression model
+        model = LinearRegression()
+        model.fit(X, y)
+        
+        # Make predictions
+        y_pred = model.predict(X)
+        
+        # Future predictions (next 30 days)
+        future_days = np.array(range(daily_counts['days'].max() + 1, daily_counts['days'].max() + 31)).reshape(-1, 1)
+        future_predictions = model.predict(future_days)
+        
+        # Ensure no negative predictions
+        future_predictions = np.maximum(future_predictions, 0)
+        
+        # Calculate metrics
+        r2 = r2_score(y, y_pred)
+        mse = mean_squared_error(y, y_pred)
+        
+        return daily_counts, future_predictions, (r2, mse, model.coef_[0], model.intercept_)
+    
+    except Exception as e:
+        return None, None, None
+
+def calculate_chat_health(df):
+    """Calculate overall chat health score (0-100)"""
+    try:
+        scores = []
+        
+        # Activity consistency (30%)
+        daily_counts = df.groupby(df['date'].dt.date).size()
+        daily_var = daily_counts.std()
+        consistency_score = max(0, 100 - (daily_var * 2))
+        scores.append(consistency_score * 0.3)
+        
+        # User participation (30%)
+        user_distribution = df['User'].value_counts(normalize=True)
+        participation_score = 100 * (1 - user_distribution.std())
+        scores.append(participation_score * 0.3)
+        
+        # Growth trend (20%) - Use linear regression trend
+        result = predict_future_activity(df)
+        if result[0] is not None:
+            _, _, metrics = result
+            _, _, slope, _ = metrics
+            growth_score = 50 + (slope * 10)
+        else:
+            growth_score = 50
+        scores.append(max(0, min(100, growth_score)) * 0.2)
+        
+        # Engagement diversity (20%)
+        unique_users = df['User'].nunique()
+        total_messages = len(df)
+        diversity_score = min(100, (unique_users / total_messages) * 1000) if total_messages > 0 else 0
+        scores.append(diversity_score * 0.2)
+        
+        return sum(scores)
+    except:
+        return 50  # Default score if calculation fails
+
+def predict_optimal_posting_time(df):
+    """Predict best time to send messages for maximum visibility"""
+    try:
+        hourly_activity = df.groupby('Hour').size()
+        
+        # Find peaks - hours with higher activity than neighbors
+        peak_hours = []
+        for hour in range(1, 23):
+            current = hourly_activity.get(hour, 0)
+            prev = hourly_activity.get(hour-1, 0)
+            next_ = hourly_activity.get(hour+1, 0)
+            
+            if current > prev and current > next_ and current > hourly_activity.mean():
+                peak_hours.append(hour)
+        
+        return sorted(peak_hours, key=lambda x: hourly_activity.get(x, 0), reverse=True)
+    except:
+        return []
+
 # --- Display Functions ---
 
 def display_overall_stats(df):
@@ -209,10 +322,11 @@ def display_user_analysis(df):
         col1.metric("Most Active User", user_msg_counts.index[0])
         col2.metric("Total Messages", user_msg_counts.iloc[0])
         col3.metric("Most Wordy User", user_word_counts.index[0])
+
 def display_time_analysis(df):
     st.header("⏰ Activity Trends & Patterns")
 
-    # 1. Monthly timeline (your first screenshot)
+    # Monthly timeline
     st.subheader("📈 Monthly Activity Timeline")
     monthly_activity = df.groupby(df['date'].dt.to_period("M")).size()
     monthly_activity.index = monthly_activity.index.astype(str)
@@ -228,7 +342,6 @@ def display_time_analysis(df):
     col1, col2 = st.columns(2)
 
     with col1:
-        # 2. Busiest days (your second screenshot)
         st.subheader("📅 Busiest Days of Week")
         day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         day_counts = df['Day'].value_counts().reindex(day_order)
@@ -244,7 +357,6 @@ def display_time_analysis(df):
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
-        # 3. Busiest months (your second screenshot)
         st.subheader("🗓️ Busiest Months")
         month_counts = df['Month'].value_counts()
         
@@ -258,11 +370,11 @@ def display_time_analysis(df):
         )
         st.plotly_chart(fig, use_container_width=True)
         
-    # 4. Weekly Activity Heatmap (your third and fourth screenshots)
+    # Weekly Activity Heatmap
     st.subheader("🔥 Weekly Activity Heatmap")
     create_activity_heatmap(df)
     
-    # 5. Activity by time of day
+    # Activity by time of day
     st.subheader("🌅 Activity by Time of Day")
     col1, col2 = st.columns(2)
     
@@ -314,7 +426,7 @@ def create_activity_heatmap(df):
         activity_map = activity_map.reindex(columns=hour_range, fill_value=0)
 
         # Check if we have enough data for heatmap
-        if activity_map.sum().sum() < 10:  # If very few messages
+        if activity_map.sum().sum() < 10:
             st.warning("Not enough data to generate a meaningful heatmap. Continue chatting! 😊")
             return
 
@@ -383,69 +495,6 @@ def display_content_analysis(df):
             st.metric("Unique Emojis", unique_emojis)
         else:
             st.info("No emojis found in the chat.")
-
-def display_sentiment_analysis(df):
-    st.header("😊 Sentiment Analysis")
-    st.info("Sentiment analysis feature coming soon!")
-    # You can integrate textblob or vaderSentiment here
-
-# --- Main Streamlit App Layout ---
-
-
-def predict_future_activity(df):
-    """Use Linear Regression to predict future message volume"""
-    try:
-        # Ensure we have datetime data
-        if not pd.api.types.is_datetime64_any_dtype(df['date']):
-            df['date'] = pd.to_datetime(df['date'], errors='coerce')
-        
-        # Remove any rows with invalid dates
-        df = df.dropna(subset=['date'])
-        
-        if df.empty:
-            return None, None, None
-        
-        # Prepare data: daily message counts
-        daily_counts = df.groupby(df['date'].dt.date).size().reset_index()
-        daily_counts.columns = ['date', 'message_count']
-        daily_counts = daily_counts.sort_values('date')
-        
-        # Ensure date column is proper datetime
-        daily_counts['date'] = pd.to_datetime(daily_counts['date'])
-        
-        # Create features: days since start
-        daily_counts['days'] = (daily_counts['date'] - daily_counts['date'].min()).dt.days
-        
-        if len(daily_counts) < 5:  # Reduced from 10 to 5 for better usability
-            return None, None, None
-        
-        # Prepare features and target
-        X = daily_counts['days'].values.reshape(-1, 1)
-        y = daily_counts['message_count'].values
-        
-        # Train Linear Regression model
-        model = LinearRegression()
-        model.fit(X, y)
-        
-        # Make predictions
-        y_pred = model.predict(X)
-        
-        # Future predictions (next 30 days)
-        future_days = np.array(range(daily_counts['days'].max() + 1, daily_counts['days'].max() + 31)).reshape(-1, 1)
-        future_predictions = model.predict(future_days)
-        
-        # Ensure no negative predictions
-        future_predictions = np.maximum(future_predictions, 0)
-        
-        # Calculate metrics
-        r2 = r2_score(y, y_pred)
-        mse = mean_squared_error(y, y_pred)
-        
-        return daily_counts, future_predictions, (r2, mse, model.coef_[0], model.intercept_)
-    
-    except Exception as e:
-        st.error(f"ML Model Error: {str(e)}")
-        return None, None, None
 
 def display_ml_analysis(df):
     st.header("🤖 Machine Learning Insights")
@@ -532,7 +581,7 @@ def display_ml_analysis(df):
             # Future insights
             avg_future = np.mean(future_predictions)
             current_avg = daily_counts['message_count'].mean()
-            change_pct = ((avg_future - current_avg) / current_avg) * 100
+            change_pct = ((avg_future - current_avg) / current_avg) * 100 if current_avg > 0 else 0
             
             st.metric(
                 "Predicted Avg (Next 30 days)", 
@@ -546,6 +595,74 @@ def display_ml_analysis(df):
     except Exception as e:
         st.error(f"❌ Error in ML analysis: {str(e)}")
         st.info("This might happen with very short or irregular chat data. Try with a longer WhatsApp export.")
+
+def display_advanced_ml_insights(df):
+    st.header("🔮 Advanced ML Insights")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📊 Chat Health Score")
+        health_score = calculate_chat_health(df)
+        
+        # Health meter
+        st.progress(health_score/100)
+        st.metric("Overall Chat Health", f"{health_score:.1f}/100")
+        
+        if health_score > 80:
+            st.success("💚 Excellent community engagement!")
+        elif health_score > 60:
+            st.info("💛 Healthy chat with good activity")
+        else:
+            st.warning("🧡 Room for improvement in engagement")
+    
+    with col2:
+        st.subheader("🕒 Optimal Posting Times")
+        peak_hours = predict_optimal_posting_time(df)
+        
+        if peak_hours:
+            st.write("**Best times to message:**")
+            for hour in peak_hours[:3]:  # Top 3 hours
+                period = "AM" if hour < 12 else "PM"
+                display_hour = hour if hour <= 12 else hour - 12
+                st.write(f"• {display_hour}:00 {period}")
+        else:
+            st.info("Post evenly throughout the day")
+    
+    # User engagement tiers
+    st.subheader("👥 User Engagement Tiers")
+    user_engagement = df['User'].value_counts()
+    
+    if len(user_engagement) >= 3:
+        tiers = {
+            'Super Active': user_engagement[user_engagement > user_engagement.quantile(0.8)].index.tolist(),
+            'Regular': user_engagement[(user_engagement <= user_engagement.quantile(0.8)) & 
+                                     (user_engagement > user_engagement.quantile(0.4))].index.tolist(),
+            'Occasional': user_engagement[user_engagement <= user_engagement.quantile(0.4)].index.tolist()
+        }
+        
+        for tier, users in tiers.items():
+            with st.expander(f"{tier} ({len(users)} users)"):
+                if users:
+                    st.write(", ".join(users[:10]))  # Show first 10 users
+                else:
+                    st.write("No users in this tier")
+    else:
+        st.info("Need more users for engagement tier analysis")
+    
+    # Conversation analytics
+    st.subheader("💬 Conversation Analytics")
+    col1, col2, col3 = st.columns(3)
+    
+    avg_msg_length = df['Message_Length'].mean()
+    media_ratio = (df['Media'].sum() / len(df) * 100) if len(df) > 0 else 0
+    active_days = df['date'].dt.date.nunique()
+    
+    col1.metric("Avg Message Length", f"{avg_msg_length:.1f} words")
+    col2.metric("Media Share", f"{media_ratio:.1f}%")
+    col3.metric("Active Days", active_days)
+
+# --- Main Streamlit App Layout ---
 
 def main_app():
     st.title("💬 WhatsApp Chat Analyzer")
@@ -611,6 +728,8 @@ def main_app():
             display_content_analysis(temp_df)
             st.markdown("---")
             display_ml_analysis(temp_df)
+            st.markdown("---")
+            display_advanced_ml_insights(temp_df)
             
             # Optional: Add download button for processed data
             st.sidebar.markdown("---")
@@ -637,9 +756,6 @@ def main_app():
         col1.metric("Total Messages", "1,247")
         col2.metric("Active Users", "8")
         col3.metric("Chat Duration", "45 days")
-
-
-
 
 if __name__ == '__main__':
     main_app()
